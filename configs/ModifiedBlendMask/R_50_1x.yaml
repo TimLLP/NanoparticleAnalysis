@@ -1,0 +1,6 @@
+_BASE_: "Base-ModifiedBlendMask.yaml"
+MODEL:
+  WEIGHTS: "model_final.pth"
+  RESNETS:
+    DEPTH: 50
+OUTPUT_DIR: "training_dir/R_50_1x/"

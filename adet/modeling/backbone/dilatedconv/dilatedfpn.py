@@ -1,0 +1,267 @@
+import torch
+import torch.nn as nn
+import torch.nn.init as init
+from torch.autograd import Function
+import torch.nn.functional as F
+from torch.autograd import Variable
+import os
+
+import numpy as np
+
+import math
+import fvcore.nn.weight_init as weight_init
+import torch.nn.functional as F
+from torch import nn
+import torch
+from adet.modeling.sr.detail import DownSample
+
+from detectron2.layers import Conv2d, ShapeSpec, get_norm
+
+from detectron2.modeling.backbone import Backbone
+from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
+from detectron2.modeling.backbone.resnet import build_resnet_backbone
+
+from adet.modeling.backbone.resnet_lpf import build_resnet_lpf_backbone
+from adet.modeling.backbone.resnet_interval import build_resnet_interval_backbone
+from adet.modeling.backbone.mobilenet import build_mnv2_backbone
+from adet.modeling.sr.detail import BasicConv
+
+#DilatedConv
+class DilatedConv(nn.Module):
+    """docstring for conv"""
+    def __init__(self,
+                 in_planes,
+                 out_planes,
+                 stride,
+                 padding,
+                 dilation):
+        super(DilatedConv, self).__init__()
+        self.mean = nn.AdaptiveAvgPool2d((1, 1))
+        self.conv = nn.Conv2d(in_planes, out_planes, 1, 1)
+        self.lateral_atrous_conv = nn.Conv2d(out_planes, out_planes,
+                               kernel_size=(3,1), stride=stride, padding=(padding,0),dilation=dilation)
+        self.vertical_atrous_conv = nn.Conv2d(out_planes, out_planes,
+                               kernel_size=(1,3), stride=stride, padding=(0,padding),dilation=dilation)
+        self.bn = nn.BatchNorm2d(out_planes)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        x = self.mean(x)
+        x = self.conv(x)
+        x = self.lateral_atrous_conv(x)
+        x = self.vertical_atrous_conv(x)
+        x = self.bn(x)
+        return self.relu(x)
+        # return x
+
+#use dailated convlution
+class Dilated_Conv(nn.Module):
+    def __init__(self,in_channel,out_channel):
+        super(Dilated_Conv, self).__init__()
+        self.atrous_conv1 = DilatedConv(in_planes=in_channel, out_planes=out_channel,  stride=1, padding=2,  dilation=2)
+        self.atrous_conv2 = DilatedConv(in_planes=out_channel, out_planes=out_channel,  stride=1, padding=4, dilation=4)
+        self.atrous_conv3 = DilatedConv(in_planes=out_channel, out_planes=out_channel,  stride=1, padding=6, dilation=6)
+        self.atrous_conv4 = DilatedConv(in_planes=out_channel, out_planes=out_channel, stride=1, padding=8, dilation=8)
+        self.conv1 =nn.Conv2d(in_channels=4*out_channel, out_channels=out_channel, kernel_size=1, stride=1)
+    def forward(self, x):
+
+        out_features1 = self.atrous_conv1(x)
+        out_features2 = self.atrous_conv2(out_features1)
+        out_features3 = self.atrous_conv3(out_features2)
+        out_features4 = self.atrous_conv4(out_features3)
+        out = torch.cat([out_features1, out_features2,out_features3, out_features4], dim = 1)
+        output = self.conv1(out)
+        return output
+
+def default_conv(in_channels, out_channels, kernel_size, stride=1, bias=True):
+    return nn.Conv2d(
+        in_channels, out_channels, kernel_size,
+        padding=(kernel_size // 2), stride=stride, bias=bias)
+
+class BasicBlock(nn.Sequential):
+    def __init__(
+            self, conv, in_channels, out_channels, kernel_size, stride=1, bias=True,
+            bn=False, act=nn.PReLU()):
+
+        m = [conv(in_channels, out_channels, kernel_size, stride=stride, bias=bias)]
+        if bn:
+            m.append(nn.BatchNorm2d(out_channels))
+        if act is not None:
+            m.append(act)
+
+        super(BasicBlock, self).__init__(*m)
+
+class ConvBlock(nn.Module):
+    def __init__(self, in_dim, embed_dim):
+        super().__init__()
+
+        self.merge = nn.Conv2d(in_dim, embed_dim, kernel_size=1, stride=1, padding=0)
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=1,
+                      padding=1, bias=True),
+            nn.BatchNorm2d(embed_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(embed_dim, embed_dim, kernel_size=3, stride=1,
+                      padding=1, bias=True),
+            nn.BatchNorm2d(embed_dim),
+            nn.ReLU(inplace=True),
+
+        )
+
+    def forward(self, x):
+        x = self.conv2(x)
+        x = self.merge(x)
+        return x
+
+class AstrousPyramid(Backbone):
+    """
+    This module implements :paper:`FPN`.
+    It creates pyramid features built on top of some input feature maps.
+    """
+
+    def __init__(
+        self, bottom_up, in_features, out_channels, norm="", top_block=None, fuse_type="sum"
+    ):
+        """
+        Args:
+            bottom_up (Backbone): module representing the bottom up subnetwork.
+                Must be a subclass of :class:`Backbone`. The multi-scale feature
+                maps generated by the bottom up network, and listed in `in_features`,
+                are used to generate FPN levels.
+            in_features (list[str]): names of the input feature maps coming
+                from the backbone to which FPN is attached. For example, if the
+                backbone produces ["res2", "res3", "res4"], any *contiguous* sublist
+                of these may be used; order must be from high to low resolution.
+            out_channels (int): number of channels in the output feature maps.
+            norm (str): the normalization to use.
+            top_block (nn.Module or None): if provided, an extra operation will
+                be performed on the output of the last (smallest resolution)
+                FPN output, and the result will extend the result list. The top_block
+                further downsamples the feature map. It must have an attribute
+                "num_levels", meaning the number of extra FPN levels added by
+                this block, and "in_feature", which is a string representing
+                its input feature (e.g., p5).
+            fuse_type (str): types for fusing the top down features and the lateral
+                ones. It can be "sum" (default), which sums up element-wise; or "avg",
+                which takes the element-wise mean of the two.
+        """
+        super(AstrousPyramid, self).__init__()
+        # assert isinstance(bottom_up, Backbone)
+        # Feature map strides and channels from the bottom up network (e.g. ResNet)
+        input_shapes = bottom_up.output_shape()
+        in_strides = [input_shapes[f].stride for f in in_features]
+        in_channels = [input_shapes[f].channels for f in in_features]
+
+
+        _assert_strides_are_log2_contiguous(in_strides)
+        same_convs = []
+        lateral_convs = []
+        output_convs = []
+
+        use_bias = norm == ""
+        for idx, in_channels in enumerate(in_channels):
+            lateral_norm = get_norm(norm, out_channels)
+            output_norm = get_norm(norm, out_channels)
+            same_conv = Dilated_Conv(
+                in_channels, out_channels)
+            lateral_conv = Conv2d(
+                in_channels, out_channels, kernel_size=1, bias=use_bias, norm=lateral_norm
+            )
+            output_conv = Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=use_bias,
+                norm=output_norm,
+            )
+            weight_init.c2_xavier_fill(lateral_conv)
+            weight_init.c2_xavier_fill(output_conv)
+            stage = int(math.log2(in_strides[idx]))
+            self.add_module("fpn_same{}".format(stage),same_conv)
+            self.add_module("fpn_lateral{}".format(stage), lateral_conv)
+            self.add_module("fpn_output{}".format(stage), output_conv)
+
+            lateral_convs.append(lateral_conv)
+            output_convs.append(output_conv)
+            same_convs.append(same_conv)
+        # Place convs into top-down order (from low to high resolution)
+        # to make the top-down computation in forward clearer.
+        self.same_convs = same_convs[::-1]
+        self.lateral_convs = lateral_convs[::-1]
+        self.output_convs = output_convs[::-1]
+        self.top_block = top_block
+        self.in_features = in_features
+        self.bottom_up = bottom_up
+
+        # Return feature names are "p<stage>", like ["p2", "p3", ..., "p6"]
+
+        self._out_feature_strides = {"p{}".format(int(math.log2(s))): s for s in in_strides}
+        # top block output feature maps.
+        if self.top_block is not None:
+            for s in range(stage, stage + self.top_block.num_levels):
+                self._out_feature_strides["p{}".format(s + 1)] = 2 ** (s + 1)
+        self._out_features = list(self._out_feature_strides.keys())
+        self._out_feature_channels = {k: out_channels for k in self._out_features}
+        self._size_divisibility = in_strides[-1]
+        assert fuse_type in {"avg", "sum"}
+        self._fuse_type = fuse_type
+
+    @property
+    def size_divisibility(self):
+        return self._size_divisibility
+
+    def forward(self, x):
+        """
+        Args:
+            input (dict[str->Tensor]): mapping feature map name (e.g., "res5") to
+                feature map tensor for each feature level in high to low resolution order.
+
+        Returns:
+            dict[str->Tensor]:
+                mapping from feature map name to FPN feature map tensor
+                in high to low resolution order. Returned feature names follow the FPN
+                paper convention: "p<stage>", where stage has stride = 2 ** stage e.g.,
+                ["p2", "p3", ..., "p6"].
+        """
+        bottom_up_features = self.bottom_up(x)
+
+        x = [bottom_up_features[f] for f in self.in_features[::-1]]
+
+        results = []
+        prev_features = self.lateral_convs[0](x[0])
+        results.append(self.output_convs[0](prev_features))
+        for features, same_conv, lateral_conv, output_conv in zip(
+            x[1:], self.same_convs[1:], self.lateral_convs[1:], self.output_convs[1:]
+        ):
+            top_down_features = F.interpolate(prev_features, scale_factor=2, mode="nearest")
+
+            same_features = same_conv(features)
+            lateral_features = lateral_conv(features)
+            prev_features = same_features + lateral_features + top_down_features
+            if self._fuse_type == "avg":
+                prev_features /= 2
+            results.insert(0, output_conv(prev_features))
+        if self.top_block is not None:
+            top_block_in_feature = bottom_up_features.get(self.top_block.in_feature, None)
+            if top_block_in_feature is None:
+                top_block_in_feature = results[self._out_features.index(self.top_block.in_feature)]
+            results.extend(self.top_block(top_block_in_feature))
+        assert len(self._out_features) == len(results)
+        return dict(zip(self._out_features, results))
+    def output_shape(self):
+        return {
+            name: ShapeSpec(
+                channels=self._out_feature_channels[name], stride=self._out_feature_strides[name]
+            )
+            for name in self._out_features
+        }
+def _assert_strides_are_log2_contiguous(strides):
+    """
+    Assert that each stride is 2x times its preceding stride, i.e. "contiguous in log2".
+    """
+    for i, stride in enumerate(strides[1:], 1):
+        assert stride == 2 * strides[i - 1], "Strides {} {} are not log2 contiguous".format(
+            stride, strides[i - 1]
+        )
