@@ -56,19 +56,8 @@ Note that:
 
 
 ## Acknowledgements
-Our code is based on AdelaiDet. We are grateful to.
+Our code is based on AdelaiDet.
 
-## Citing BlendMask
-```BibTeX
-@inproceedings{chen2020blendmask,
-  title     =  {{BlendMask}: Top-Down Meets Bottom-Up for Instance Segmentation},
-  author    =  {Chen, Hao and Sun, Kunyang and Tian, Zhi and Shen, Chunhua and Huang, Yongming and Yan, Youliang},
-  booktitle =  {Proc. IEEE Conf. Computer Vision and Pattern Recognition (CVPR)},
-  year      =  {2020}
-}
-
-
-```
 
 
 
