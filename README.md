@@ -1,3 +1,17 @@
+# Nanoparticle Image Synthesis
+
+## Quick Start
+### Format conversion
+If you want to get the generate images.You need save images as img.mat.Please run the saveimg.m
+### weakly labeled
+The original image needs to be weakly labeled,please run the ptcprepare.m
+### Generate initial images
+Once we have pre-processed the image, we can get the initial composite image by running generator.m
+### Generate final images
+To get the final image, we can pick the initial image by running select_m.m
+
+
+
 # ModifiedBlendMask
 
 ModifiedBlendMask is a work on nanoparticle instance segmentation,which is based on one-stage instance segmentation method BlendMask.
