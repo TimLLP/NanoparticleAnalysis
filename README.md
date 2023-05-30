@@ -2,11 +2,11 @@
 
 ## Quick Start
 ### Format conversion
-If you want to get the generate images.You need save images as img.mat.Please run the saveimg.m
+If you want to get the generate images.You need save images as img.mat.You can download data.mat from.
 ### weakly labeled
-The original image needs to be weakly labeled,please run the ptcprepare.m
+The original image needs to be weakly labeled,please run the Generator/ptcprepare.m
 ### Generate initial images
-Once we have pre-processed the image, we can get the initial composite image by running generator.m
+Once we have pre-processed the image, we can get the initial composite image by running Gererator/generator.m
 ### Generate final images
 To get the final image, we can pick the initial image by running select_m.m
 
