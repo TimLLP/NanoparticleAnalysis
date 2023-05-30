@@ -2,7 +2,7 @@
 
 ## Quick Start
 ### Format conversion
-If you want to get the generate images.You need save images as img.mat.You can download data.mat from.
+If you want to get the generate images.You need save images as img.mat.You can download data.mat from https://pan.baidu.com/s/1zyCDkVpS3wxLDCv2VzQ51A.
 ### weakly labeled
 The original image needs to be weakly labeled,please run the Generator/ptcprepare.m
 ### Generate initial images
@@ -34,7 +34,7 @@ python setup.py build develop
 ### Inference with Pre-trained Models
 
 1. Pick a model and its config file, `/R_50_1x.yaml`.
-2. Download the model `wget https://cloudstor.aarnet.edu.au/plus/s/glqFc13cCoEyHYy/download -O fcos_R_50_1x.pth`
+2. Download the model `https://pan.baidu.com/s/1zyCDkVpS3wxLDCv2VzQ51A`
 3. Run the demo with
 ```
 python demo/demo.py \
