@@ -2,7 +2,7 @@
 
 ## Quick Start
 ### Format conversion
-If you want to get the generate images.You need save images as img.mat.You can download data.mat from https://pan.baidu.com/s/1zyCDkVpS3wxLDCv2VzQ51A.
+If you want to get the generate images.You need save images as data.mat.You can download data.mat from https://pan.baidu.com/s/1zyCDkVpS3wxLDCv2VzQ51A.
 ### weakly labeled
 The original image needs to be weakly labeled,please run the Generator/ptcprepare.m
 ### Generate initial images
